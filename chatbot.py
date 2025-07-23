@@ -99,6 +99,7 @@ def isolation_prompt(input_query, history):
 
         Return **False** if the input query:
         - There is no chat history.
+        - If the chat history only contains greetings or unrelated messages.
         - Introduces a completely new product or unrelated category.
         - Changes the subject to something not discussed in the prior conversation.
         - Is unrelated in terms of user goal, topic, or shopping category.
