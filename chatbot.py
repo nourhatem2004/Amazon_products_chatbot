@@ -20,106 +20,95 @@ def main():
 
 
 def answer_query(input_query, history) -> str:
-        
-        isolation_response = isolation_prompt(input_query, history)
-        print(isolation_response)
 
-        if isolation_response.lower() == "false":
-            db = FAISS.load_local(os.path.join(os.path.dirname(__file__), 'faiss_index'), embedding_function,allow_dangerous_deserialization=True )
+        db = FAISS.load_local(os.path.join(os.path.dirname(__file__), 'faiss_index'), embedding_function,allow_dangerous_deserialization=True )
+        
+        results = db.similarity_search_with_score(
+            input_query,
+            k=10
+        )
+
+        results = [result for result in results if result[1] > 0.5]
+
+        if len(results) == 0:
+            return "No relevant data found. Try indexing some content first."
             
-            results = db.similarity_search_with_score(
-                input_query,
-                k=10
-            )
+        context = "\n".join([doc.page_content for doc, score in results])
 
-            results = [result for result in results if result[1] > 0.5]
+        Final_Prompt = f"""
+        You are an intelligent assistant that helps identify whether the user's current query follows the same context as their previous conversation, and based on that, you help them find the best deals and products.
+        Your Task:
 
-            if len(results) == 0:
-                return "No relevant data found. Try indexing some content first."
-                
-            context = "\n".join([doc.page_content for doc, score in results])
+        Step 1 — Analyze Contextual Continuity:
+        Determine whether the current user query is contextually related to the previous conversation (this is a backend operation dont mention it in the response).
 
-            Final_Prompt = f"""
-            You are a shopping assistant helping customers find the best deals and products based on the provided context.
+        Consider it a CONTEXT MATCH (true) if:
+        - The query is a follow-up or continuation on the same product, category, or shopping intent.
+        - It asks for clarification, comparison, recommendation, or additional detail about something already discussed.
+        - The user's goal has not changed from the previous messages.
 
-            Context:
-            {context}
+        Consider it NOT A MATCH (false) if:
+        - There is no meaningful chat history or only generic greetings.
+        - The query introduces a new topic, product, brand, or unrelated category.
+        - The user changes the subject to something outside the scope of the prior conversation.
+        - The intent or shopping goal clearly shifts.
 
-            User Query:
-            {input_query}
+        Step 2 — Based on the above judgment, follow the appropriate path:
 
-            Instructions:
-            - If the query is **not related to shopping**, do **not** answer it.
-            - If the query **is related to shopping**, answer it **concisely** using only the provided context.
-            - Always include the **source of the information** (e.g., a hyperlink to the product).
-            - Do **not** ask for additional context or clarification.
-            - If a **specific product** is requested and it is **not found** in the context, respond with:  
-            **"Sorry, I could not find the product you are looking for. Please try searching for a different product."**
-            - If a **generic product** (e.g., "coffee machine") is requested and it is **not available** in the context, respond with:  
-            **"Sorry, there are currently no coffee machines up for sale. Please try searching for a different product."**
-            - When recommending a product, include a **hyperlink** to the product URL.
-            -Below is the conversation history the past user query starts with "user:" and your response starts with "bot:, if nothin is below then this is the first response"
-            {history}
-            """
-        else:
-            Final_Prompt = f"""
-            You are a smart and helpful shopping assistant. Your job is to assist users in finding the best deals and product details **based strictly on the context provided below.**
+        IF Context Match = False:
+        Use ONLY the external context below to help the user:
 
-            ### Context:
-            Below is the ongoing conversation history. Each user message starts with **"user:"** and your responses start with **"bot:"**.
+        CONTEXT START
+        {context}
+        CONTEXT END
 
-            {history}
+        - Treat the user's query as a new request.
+        - DO NOT reference previous history or conversations.
+        - Focus only on products and offers available in the provided context.
 
-            ### Important Instructions:
-            - NEVER start your response with 'bot:'
-            - The user is asking a **follow-up** question about the **same product or topic** previously discussed.
-            - You may use **online reviews, comparisons, or expert summaries** to support your answer, **but only about the products in the history**.
-            - DO NOT introduce, recommend, or suggest **any new products or brands** that were not already part of the history.
-            - If the user asks for your personal opinion, you may respond using knowledge relevant to the **existing context** and its **online reviews, comparisons, or expert summaries**, but **NEVER** recommend or refer to unrelated products even if its the same product but a different model.
-            -if the user asks for more details and you cant provide any more link the product url and tell them to check it out
-            ### User Query:
-            {input_query}
+        IF Context Match = True:
+        You may use the chat history below to answer the user's query:
 
-            """
-        print(Final_Prompt)
-        response = model.generate_content(Final_Prompt)
-        return response.text
-        
+        HISTORY START
+        {history}
+        HISTORY END
 
-def isolation_prompt(input_query, history):
-    Prompt = f"""
-        You are an intelligent assistant that helps identify whether a user's current input query follows the same context as the previous conversation between the user and the bot.
+        Special Instructions when Context Match = True:
+        - DO NOT prefix your response with “bot:”
+        - The current user query is a follow-up based on the products or topics in the above history.
+        - You may rely on:
+        - Online reviews,
+        - Product comparisons,
+        - Expert analysis or common feedback — but only for items already discussed.
+        - DO NOT introduce or recommend new products, categories, or brands not already mentioned.
+        - DO NOT suggest alternative versions or models — stay strictly within context.
+        - If the user requests more details and none are available, provide a product link (if possible) and advise the user to check it out for further information.
 
-        **Your task**: Analyze the latest input query and the preceding chat history to determine **contextual continuity**.
+        Additional Rule:
+        If the user asks for a specific product (e.g., "laptop") and that product does not exist in the current context or history:
+        - DO NOT recommend related accessories, substitutes, or complementary items (e.g., laptop stands, keyboards, or cases), unless the user explicitly asks for them.
+        - Only respond about the exact product or category the user mentioned.
+        - If no relevant results exist, inform the user clearly and, if possible, suggest checking back later or refining the query.
 
-        Return **True** if the input query:
-        - Is a follow-up question about the same product or topic.
-        - Asks for a comparison, clarification, or recommendation related to the same product or category discussed earlier.
-        - Seeks additional details or guidance related to the same subject or ongoing user intent.
+        Do not mention the "provided context" or "chat history" in your response. Refer to them as "products listed" and "previous interactions".
 
-        Return **False** if the input query:
-        - There is no chat history.
-        - If the chat history only contains greetings or unrelated messages.
-        - Introduces a completely new product or unrelated category.
-        - Changes the subject to something not discussed in the prior conversation.
-        - Is unrelated in terms of user goal, topic, or shopping category.
+        Current User Query:
+        ***QUERY START***
+        {input_query}
+        ***QUERY END***
 
-        Respond with only **True** or **False**.
-
-        ### Input:
+        Input Summary:
         Chat History:
         {history}
 
         Current Query:
         {input_query}
-
         """
-    response = model.generate_content(Prompt)
-    answer = response.text.strip()
 
-    return answer
-
-
+        print(Final_Prompt)
+        response = model.generate_content(Final_Prompt)
+        return response.text
+        
 
 
 
